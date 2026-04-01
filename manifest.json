@@ -1,0 +1,29 @@
+{
+  "name": "WaveStamp \u2014 Music Video Builder",
+  "short_name": "WaveStamp",
+  "description": "Build cinematic music videos with lyrics, visualizers, and export to MP4.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#07080a",
+  "theme_color": "#07080a",
+  "categories": [
+    "music",
+    "entertainment",
+    "productivity"
+  ],
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
