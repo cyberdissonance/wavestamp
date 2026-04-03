@@ -1,0 +1,12 @@
+{
+  "name": "wavestamp",
+  "version": "1.0.0",
+  "description": "Music video builder with lyrics, visualizers, and MP4 export",
+  "dependencies": {
+    "stripe": "^14.0.0",
+    "@supabase/supabase-js": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
