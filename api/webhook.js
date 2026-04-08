@@ -115,7 +115,7 @@ export default async function handler(req, res) {
         if (profile) {
           await supabase.from('profiles').update({
             is_pro:              isPro,
-            subscription_status: cancelAtPeriodEnd ? 'cancelling' : status,
+            subscription_status: cancelAtPeriodEnd ? 'cancelling' : (status === 'trialing' ? 'active' : status),
             pro_access_until:    periodEndISO, // always store — billing date or expiry
             updated_at:          new Date().toISOString(),
           }).eq('id', profile.id);
