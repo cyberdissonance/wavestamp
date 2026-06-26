@@ -77,6 +77,7 @@ export default async function handler(req, res) {
       payment_method_types: ['card'],
       line_items: [{ price: priceId, quantity: 1 }],
       mode: 'subscription',
+      allow_promotion_codes: true,  // show "Add promotion code" field at checkout
       subscription_data: {
         trial_period_days: 7,
         metadata: {

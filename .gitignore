@@ -1,0 +1,17 @@
+# ── Secrets / environment ──
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ── Dependencies ──
+node_modules/
+
+# ── Vercel ──
+.vercel
+
+# ── OS / editor cruft ──
+.DS_Store
+Thumbs.db
+*.log
