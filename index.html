@@ -985,9 +985,11 @@ input.vol{width:70px;height:3px;accent-color:#fff;}
           <div class="um-item" id="um-upgrade" onclick="closeUserMenu();startUpgrade()">⬆ Upgrade to Pro</div>
           <div class="um-item" id="um-manage" style="display:none;" onclick="closeUserMenu();openCustomerPortal()">💳 Manage billing</div>
           <div class="um-item" id="um-account" onclick="closeUserMenu();openAccountModal()">👤 Account details</div>
+          <div class="um-item" onclick="closeUserMenu();openFeedbackModal()">💬 Report an issue</div>
           <div class="um-item danger" onclick="signOut()">Sign out</div>
         </div>
       </div>
+      <button class="bsm gh" id="feedback-btn" onclick="openFeedbackModal()" title="Send feedback or report a problem">💬 Feedback</button>
       <button class="bsm gh" onclick="newProject()">+ New project</button>
       <button class="bsm gh" onclick="document.getElementById('export-modal').classList.add('open')">Export guide</button>
       <button class="bsm gh" id="mp4-btn" onclick="openMP4Options()" disabled>⬇ Export MP4</button>
@@ -1575,6 +1577,43 @@ input.vol{width:70px;height:3px;accent-color:#fff;}
       <button id="acct-billing-btn" onclick="closeAccountModal();openCustomerPortal();" style="display:none;padding:10px;border-radius:8px;border:1px solid var(--border2);background:transparent;color:var(--text);font-family:var(--font);font-weight:600;font-size:13px;cursor:pointer;">Manage billing</button>
       <button onclick="closeAccountModal();signOut();" style="padding:10px;border-radius:8px;border:1px solid var(--border2);background:transparent;color:var(--muted);font-family:var(--font);font-weight:600;font-size:13px;cursor:pointer;">Sign out</button>
     </div>
+  </div>
+</div>
+
+<!-- Feedback / Report an issue modal -->
+<div id="feedback-modal" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.85);backdrop-filter:blur(12px);z-index:9999;align-items:center;justify-content:center;">
+  <div style="background:var(--surface);border:1px solid var(--border2);border-radius:14px;padding:2rem;width:100%;max-width:440px;margin:1rem;position:relative;">
+    <button onclick="closeFeedbackModal()" style="position:absolute;top:1rem;right:1rem;background:transparent;border:none;color:var(--muted);font-size:18px;cursor:pointer;line-height:1;">✕</button>
+    <div style="font-size:1.1rem;font-weight:700;margin-bottom:.35rem;">Send feedback</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:1.25rem;">Hit a bug or have an idea? Tell me — I read every one.</div>
+
+    <!-- Category -->
+    <div style="margin-bottom:1rem;">
+      <div style="font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:5px;">Type</div>
+      <select id="fb-category" style="width:100%;padding:9px 10px;border-radius:8px;border:1px solid var(--border2);background:var(--bg);color:var(--text);font-family:var(--font);font-size:13px;cursor:pointer;">
+        <option value="bug">🐛 Something's broken</option>
+        <option value="export">🎬 Export problem</option>
+        <option value="billing">💳 Billing / coupon issue</option>
+        <option value="suggestion">💡 Suggestion / feature request</option>
+        <option value="other">💬 Other</option>
+      </select>
+    </div>
+
+    <!-- Message -->
+    <div style="margin-bottom:1rem;">
+      <div style="font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:5px;">Message</div>
+      <textarea id="fb-message" rows="5" maxlength="4000" placeholder="What happened? The more detail the better." style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border2);background:var(--bg);color:var(--text);font-family:var(--font);font-size:13px;resize:vertical;"></textarea>
+    </div>
+
+    <!-- Email (optional, prefilled if signed in) -->
+    <div style="margin-bottom:1.25rem;">
+      <div style="font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:5px;">Email <span style="text-transform:none;letter-spacing:0;font-weight:400;">(optional — so I can reply)</span></div>
+      <input id="fb-email" type="email" placeholder="you@example.com" style="width:100%;padding:9px 10px;border-radius:8px;border:1px solid var(--border2);background:var(--bg);color:var(--text);font-family:var(--font);font-size:13px;">
+    </div>
+
+    <div id="fb-status" style="font-size:12px;color:var(--muted);min-height:16px;margin-bottom:10px;"></div>
+
+    <button id="fb-submit" onclick="submitFeedback()" style="width:100%;padding:11px;border-radius:8px;border:none;background:var(--accent);color:var(--bg);font-family:var(--font);font-weight:700;font-size:13px;cursor:pointer;">Send feedback</button>
   </div>
 </div>
 
@@ -10648,6 +10687,74 @@ function closeAccountModal() {
   if (modal) modal.style.display = 'none';
 }
 
+/* ══════════════════════════════
+   FEEDBACK / REPORT AN ISSUE
+══════════════════════════════ */
+function openFeedbackModal() {
+  const modal = document.getElementById('feedback-modal');
+  if (!modal) return;
+  // Prefill email if signed in; reset status/submit each open
+  const emailEl = document.getElementById('fb-email');
+  if (emailEl && !emailEl.value && _user && _user.email) emailEl.value = _user.email;
+  document.getElementById('fb-status').textContent = '';
+  const btn = document.getElementById('fb-submit');
+  if (btn) { btn.disabled = false; btn.textContent = 'Send feedback'; }
+  modal.style.display = 'flex';
+  setTimeout(() => { const m = document.getElementById('fb-message'); if (m) m.focus(); }, 50);
+}
+
+function closeFeedbackModal() {
+  const modal = document.getElementById('feedback-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function submitFeedback() {
+  const msgEl = document.getElementById('fb-message');
+  const statusEl = document.getElementById('fb-status');
+  const btn = document.getElementById('fb-submit');
+  const message = (msgEl && msgEl.value || '').trim();
+  if (!message) {
+    statusEl.textContent = 'Please enter a message first.';
+    statusEl.style.color = '#f0a500';
+    if (msgEl) msgEl.focus();
+    return;
+  }
+  const plan = _isAdmin ? 'admin' : (_isPro ? 'pro' : 'free');
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  statusEl.style.color = 'var(--muted)';
+  statusEl.textContent = '';
+  try {
+    const res = await fetch('/api/feedback', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        category: document.getElementById('fb-category').value,
+        message,
+        email:    (document.getElementById('fb-email').value || '').trim(),
+        userId:   _user ? _user.id : null,
+        plan,
+        browser:  navigator.userAgent,
+        pageUrl:  location.href,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) {
+      closeFeedbackModal();
+      if (msgEl) msgEl.value = '';
+      showSaveToast('✓ Thanks — feedback sent');
+    } else {
+      throw new Error(data.error || 'Send failed');
+    }
+  } catch(e) {
+    console.error('Feedback error:', e);
+    statusEl.style.color = '#e5484d';
+    statusEl.textContent = '⚠ Could not send — please try again.';
+    btn.disabled = false;
+    btn.textContent = 'Send feedback';
+  }
+}
+
 // Close menu when clicking outside
 document.addEventListener('click', (e) => {
   const wrap = document.getElementById('auth-wrap');
@@ -10656,6 +10763,9 @@ document.addEventListener('click', (e) => {
   // Export gate — can dismiss by clicking backdrop
   const gate = document.getElementById('export-gate');
   if (gate && e.target === gate) gate.classList.remove('open');
+  // Feedback modal — dismiss by clicking the backdrop
+  const fb = document.getElementById('feedback-modal');
+  if (fb && e.target === fb) fb.style.display = 'none';
 });
 
 /* ══════════════════════════════
