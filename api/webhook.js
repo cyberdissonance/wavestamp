@@ -13,6 +13,12 @@ const supabase = createClient(
 
 const FOUNDING_LIMIT = parseInt(process.env.FOUNDING_MEMBER_LIMIT || '100');
 
+// Stripe requires the raw request body to verify the webhook signature.
+// Vercel parses the body by default, which corrupts verification — disable it here.
+export const config = {
+  api: { bodyParser: false },
+};
+
 async function getRawBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
