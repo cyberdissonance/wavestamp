@@ -213,6 +213,7 @@ input[type=range]{width:100%;height:4px;accent-color:var(--accent);cursor:pointe
 #preview-panel{background:#000;position:relative;overflow:hidden;width:100%;height:100%;}
 #preview-wrap{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);overflow:hidden;}
 #preview-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}
+#preview-bg-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none;}
 #preview-overlay{position:absolute;inset:0;}
 #viz-canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;}
 #render-canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;display:none;}
@@ -561,8 +562,8 @@ input.vol{width:70px;height:3px;accent-color:#fff;}
     overflow: hidden;
   }
 
-  /* Preview bg image fills wrap without overflow */
-  #preview-bg {
+  /* Preview bg image/video fills wrap without overflow */
+  #preview-bg, #preview-bg-video {
     max-width: 100%;
     max-height: 100%;
     width: 100% !important;
@@ -1014,12 +1015,12 @@ input.vol{width:70px;height:3px;accent-color:#fff;}
       <!-- TRACK TAB -->
       <div class="tab-panel active" id="tab-track">
         <div class="field">
-          <label class="flabel">Background image</label>
+          <label class="flabel">Background image or video</label>
           <div class="upzone" id="img-zone" onclick="document.getElementById('img-input').click()">
-            <input type="file" id="img-input" accept="image/*" onchange="handleImg(event)">
+            <input type="file" id="img-input" accept="image/*,video/*" onchange="handleImg(event)">
             <div class="upzone-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="rgba(255,255,255,.35)"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg></div>
-            <div class="upzone-title" id="img-title">Click to upload image</div>
-            <div class="upzone-hint" id="img-hint">JPG · PNG · WebP</div>
+            <div class="upzone-title" id="img-title">Click to upload image or video</div>
+            <div class="upzone-hint" id="img-hint">JPG · PNG · WebP · MP4</div>
           </div>
         </div>
         <div class="field">
@@ -1435,6 +1436,7 @@ input.vol{width:70px;height:3px;accent-color:#fff;}
   <div id="preview-panel">
     <div id="preview-wrap">
       <img id="preview-bg" src="" alt="" style="display:none;">
+      <video id="preview-bg-video" muted playsinline loop preload="auto"></video>
       <div id="no-img">
         <svg viewBox="0 0 24 24" fill="white"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
         Upload an image to begin
@@ -1678,6 +1680,8 @@ input.vol{width:70px;height:3px;accent-color:#fff;}
 ══════════════════════════════ */
 const AUD = document.getElementById('main-audio');
 let imgLoaded = false, audioLoaded = false;
+let bgType = 'image';          // 'image' | 'video' — kind of background loaded
+let bgVideoFile = null;        // the uploaded video File (for export decode in phase 2)
 let audioCtx, analyser, audSrc, freqData, bufLen;
 let isPlaying = false, vizRaf;
 let vizMode = 0, aspectRatio = '16:9', showProgressBar = true, lyricMode = 'context', showMeta = true;
@@ -1845,8 +1849,60 @@ window.addEventListener('resize', () => {
 ══════════════════════════════ */
 function handleImg(e) {
   const f = e.target.files[0]; if (!f) return;
-  loadImageFile(f);
+  loadBackgroundFile(f);
 }
+
+// Background loader dispatch — images and videos both come through the image zone.
+function loadBackgroundFile(f) {
+  if (f && f.type && f.type.startsWith('video/')) loadVideoFile(f);
+  else loadImageFile(f);
+}
+
+function loadVideoFile(f) {
+  const vid = document.getElementById('preview-bg-video');
+  const img = document.getElementById('preview-bg');
+  if (vid.src && vid.src.startsWith('blob:')) URL.revokeObjectURL(vid.src);
+  const url = URL.createObjectURL(f);
+  vid.src = url;
+  vid.load();
+  // Show video, hide the still image
+  img.style.display = 'none';
+  img.removeAttribute('src');
+  vid.style.display = 'block';
+  document.getElementById('no-img').style.display = 'none';
+  document.getElementById('img-zone').classList.add('done');
+  document.getElementById('img-title').textContent = trunc(f.name, 22);
+  document.getElementById('img-hint').textContent = fmtBytes(f.size) + ' · video';
+  bgType = 'video';
+  bgVideoFile = f;
+  imgLoaded = true;              // "has a background" — keeps existing gates working
+  // Keep the video's playhead aligned to the song on load
+  vid.addEventListener('loadedmetadata', () => { syncBgVideo(); }, { once: true });
+  applyStyle();
+  checkMP4Ready();
+  checkAutoTs();
+}
+
+// Keep the background video's playhead in step with the audio timeline.
+// Video is muted + loop, so continuous playback wraps on its own; we only
+// need to (re)align on play and on seek.
+function syncBgVideo() {
+  if (bgType !== 'video') return;
+  const vid = document.getElementById('preview-bg-video');
+  if (!vid || !vid.duration || isNaN(vid.duration)) return;
+  const t = (typeof AUD !== 'undefined' && AUD && !isNaN(AUD.currentTime)) ? AUD.currentTime : 0;
+  try { vid.currentTime = t % vid.duration; } catch(_) {}
+}
+
+// Wire background video to the audio element's transport once.
+(function initBgVideoSync() {
+  if (typeof AUD === 'undefined' || !AUD) return;
+  const vid = () => document.getElementById('preview-bg-video');
+  AUD.addEventListener('play',    () => { if (bgType === 'video') { syncBgVideo(); vid().play().catch(()=>{}); } });
+  AUD.addEventListener('pause',   () => { if (bgType === 'video') vid().pause(); });
+  AUD.addEventListener('seeking', () => { syncBgVideo(); });
+  AUD.addEventListener('seeked',  () => { syncBgVideo(); });
+})();
 
 function handleAudio(e) {
   const f = e.target.files[0]; if (!f) return;
@@ -1856,6 +1912,16 @@ function handleAudio(e) {
 function loadImageFile(f) {
   const url = URL.createObjectURL(f);
   const bg = document.getElementById('preview-bg');
+  // Clear any previously-loaded video background
+  const vid = document.getElementById('preview-bg-video');
+  if (vid) {
+    vid.pause();
+    if (vid.src && vid.src.startsWith('blob:')) URL.revokeObjectURL(vid.src);
+    vid.removeAttribute('src'); vid.load();
+    vid.style.display = 'none';
+  }
+  bgType = 'image';
+  bgVideoFile = null;
   bg.src = url;
   bg.style.display = 'block';
   document.getElementById('no-img').style.display = 'none';
@@ -1893,7 +1959,7 @@ function loadAudioFile(f) {
 
 // Drag-and-drop for both upload zones
 function initDragDrop() {
-  setupZone('img-zone',   ['image/'],        loadImageFile);
+  setupZone('img-zone',   ['image/','video/'], loadBackgroundFile);
   setupZone('audio-zone', ['audio/','video/'], loadAudioFile);
 }
 
@@ -2421,7 +2487,7 @@ function ensureLyricsTimed() {
 
 async function togglePlay() {
   if (!audioLoaded) { alert('Upload an audio file first.'); return; }
-  if (_previewGateFired && !_user && SUPABASE_URL !== 'YOUR_SUPABASE_URL') {
+  if (_previewGateFired && !_user && SUPABASE_URL !== 'YOUR_SUPABASE_URL' && !_DEV_UNLOCK) {
     triggerPlaybackGate();
     return;
   }
@@ -2650,8 +2716,8 @@ function onTimeUpdate() {
     if (lsf) lsf.style.width = ((t/d)*100).toFixed(2) + '%';
   }
 
-  // Playback gate — only applies to guests (not signed in)
-  if (!_previewGateFired && SUPABASE_URL !== 'YOUR_SUPABASE_URL' && !_user) {
+  // Playback gate — only applies to guests (not signed in). Skipped in local dev.
+  if (!_previewGateFired && SUPABASE_URL !== 'YOUR_SUPABASE_URL' && !_user && !_DEV_UNLOCK) {
     _previewSecsPlayed += 0.25; // timeupdate fires ~4x/sec
     if (_previewSecsPlayed >= PREVIEW_LIMIT_SECS) {
       triggerPlaybackGate();
@@ -2928,8 +2994,10 @@ function applyStyle() {
   if (progWrap) progWrap.style.display = showProgressBar ? '' : 'none';
 
   if (imgLoaded) {
-    document.getElementById('preview-bg').style.filter =
-      `brightness(${(1-ov*.6).toFixed(2)}) saturate(0.75)`;
+    const _bgFilter = `brightness(${(1-ov*.6).toFixed(2)}) saturate(0.75)`;
+    document.getElementById('preview-bg').style.filter = _bgFilter;
+    const _bgVid = document.getElementById('preview-bg-video');
+    if (_bgVid) _bgVid.style.filter = _bgFilter;
   }
   if (waveformPeaks) drawWaveform();
 }
@@ -7616,6 +7684,155 @@ function _reportExportError(err, path) {
   } catch(_) {}
 }
 
+/* ══════════════════════════════
+   VIDEO BACKGROUND DECODE (export)
+   Demux the uploaded MP4 with mp4box.js, decode every frame with a WebCodecs
+   VideoDecoder, and cache each as a JPEG blob (native resolution, presentation
+   order). During export, bitmapAt(t) returns the frame for a given time, looping
+   the clip to fill the whole song.
+══════════════════════════════ */
+async function _loadMp4Box() {
+  if (window.MP4Box) return;
+  await new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/mp4box@0.5.2/dist/mp4box.all.min.js';
+    s.onload = resolve; s.onerror = () => reject(new Error('Could not load the video demuxer.'));
+    document.head.appendChild(s);
+  });
+}
+
+async function decodeVideoBackground(file, subEl) {
+  if (typeof VideoDecoder === 'undefined') {
+    throw new Error('This browser can’t decode video for export. Try the latest Chrome or Edge.');
+  }
+  await _loadMp4Box();
+
+  const buf = await file.arrayBuffer();
+  buf.fileStart = 0;
+
+  // ── 1) Demux: collect encoded samples + build the decoder description ──
+  const mp4 = MP4Box.createFile();
+  const demux = await new Promise((resolve, reject) => {
+    const samples = [];
+    let track = null, description = null;
+    mp4.onError = e => reject(new Error('Could not read this video file (' + e + ').'));
+    mp4.onReady = (info) => {
+      track = info.videoTracks && info.videoTracks[0];
+      if (!track) { reject(new Error('No video track found in that file.')); return; }
+      const trak = mp4.getTrackById(track.id);
+      try {
+        for (const entry of trak.mdia.minf.stbl.stsd.entries) {
+          const box = entry.avcC || entry.hvcC || entry.vpcC || entry.av1C;
+          if (box) {
+            const ds = new DataStream(undefined, 0, DataStream.BIG_ENDIAN);
+            box.write(ds);
+            description = new Uint8Array(ds.buffer, 8); // strip 8-byte box header
+            break;
+          }
+        }
+      } catch(_) { /* some codecs (VP8/9) need no description */ }
+      mp4.setExtractionOptions(track.id, null, { nbSamples: Infinity });
+      mp4.start();
+    };
+    mp4.onSamples = (id, user, list) => {
+      const ts = track.timescale;
+      for (const s of list) {
+        samples.push({
+          type: s.is_sync ? 'key' : 'delta',
+          timestamp: (s.cts / ts) * 1e6,
+          duration:  (s.duration / ts) * 1e6,
+          data: s.data,
+        });
+      }
+      resolve({ samples, track, description });
+    };
+    mp4.appendBuffer(buf);
+    mp4.flush();
+  });
+
+  const { samples, track, description } = demux;
+  if (!samples.length) throw new Error('That video has no readable frames.');
+
+  // ── 2) Decode every frame → JPEG blob (serialised so the shared canvas is safe) ──
+  const encCanvas = document.createElement('canvas');
+  encCanvas.width  = track.video.width;
+  encCanvas.height = track.video.height;
+  const encCtx = encCanvas.getContext('2d');
+
+  const frames = [];           // { blob, ts }
+  let decodeErr = null;
+  let chain = Promise.resolve();
+
+  const decoder = new VideoDecoder({
+    output: (frame) => {
+      const ts = frame.timestamp;
+      chain = chain.then(async () => {
+        try {
+          encCtx.drawImage(frame, 0, 0);
+          const blob = await new Promise(res => encCanvas.toBlob(res, 'image/jpeg', 0.92));
+          frames.push({ blob, ts });
+        } finally { frame.close(); }
+      });
+    },
+    error: (e) => { decodeErr = e; },
+  });
+
+  const cfg = { codec: track.codec, codedWidth: track.video.width, codedHeight: track.video.height };
+  if (description) cfg.description = description;
+  decoder.configure(cfg);
+
+  const total = samples.length;
+  for (let i = 0; i < total; i++) {
+    const s = samples[i];
+    decoder.decode(new EncodedVideoChunk({ type: s.type, timestamp: s.timestamp, duration: s.duration, data: s.data }));
+    // Backpressure — keep the in-flight queue small so memory stays bounded
+    if (decoder.decodeQueueSize > 24) {
+      await new Promise(r => setTimeout(r, 0));
+    }
+    if (i % 30 === 0 && subEl) subEl.textContent = `Decoding video… ${Math.round((i / total) * 100)}%`;
+    if (decodeErr) break;
+  }
+  await decoder.flush();
+  await chain;
+  try { decoder.close(); } catch(_) {}
+  if (decodeErr) throw new Error('Video decode failed: ' + (decodeErr.message || decodeErr));
+  if (!frames.length) throw new Error('No frames decoded from the video.');
+
+  // Presentation order + timestamp index (robust to any decode-order quirks)
+  frames.sort((a, b) => a.ts - b.ts);
+  const tsList = frames.map(f => f.ts);                 // microseconds, ascending
+  const durationSec = ((track.duration / track.timescale) || (tsList[tsList.length - 1] / 1e6)) || 1;
+
+  // Binary search: greatest frame index with ts <= tUs
+  function indexForUs(tUs) {
+    let lo = 0, hi = tsList.length - 1, ans = 0;
+    while (lo <= hi) { const mid = (lo + hi) >> 1; if (tsList[mid] <= tUs) { ans = mid; lo = mid + 1; } else hi = mid - 1; }
+    return ans;
+  }
+
+  return {
+    width: track.video.width,
+    height: track.video.height,
+    durationSec,
+    frameCount: frames.length,
+    _frames: frames,
+    _lastIdx: -1,
+    _bmp: null,
+    // Return the ImageBitmap for song-time tSec (video loops to fill the song).
+    async bitmapAt(tSec) {
+      let tv = tSec % this.durationSec;
+      if (tv < 0) tv += this.durationSec;
+      const idx = indexForUs(tv * 1e6);
+      if (idx === this._lastIdx && this._bmp) return this._bmp;
+      if (this._bmp) this._bmp.close();
+      this._bmp = await createImageBitmap(this._frames[idx].blob);
+      this._lastIdx = idx;
+      return this._bmp;
+    },
+    dispose() { if (this._bmp) { this._bmp.close(); this._bmp = null; } this._frames = []; },
+  };
+}
+
 async function startMP4Export() {
   if (!imgLoaded || !audioLoaded) { alert('Upload both an image and audio file first.'); return; }
 
@@ -7707,8 +7924,10 @@ async function startMP4Export() {
     }
   }
 
-  // Route to correct pipeline
-  const useGPU = _gpuSupported && _gpuDevice && typeof _gpuDevice.createBuffer === 'function';
+  // Route to correct pipeline. Video backgrounds render through the Canvas 2D path
+  // (per-frame decoded video frame); the GPU path stays image-only for now.
+  const useGPU = _gpuSupported && _gpuDevice && typeof _gpuDevice.createBuffer === 'function'
+    && bgType !== 'video';
   console.log(`[WaveStamp] Export path: ${useGPU ? 'WebGPU' : 'Canvas 2D'}`);
   if (useGPU) {
     console.log(`[WaveStamp-GPU] lyrics count: ${LYRICS.length}`);
@@ -7716,6 +7935,10 @@ async function startMP4Export() {
     if (_bgEl) console.log(`[WaveStamp-GPU] bgImg natural: ${_bgEl.naturalWidth}×${_bgEl.naturalHeight}`);
   }
   subEl.textContent = useGPU ? 'Initialising GPU pipeline…' : 'Setting up…';
+
+  // Video-background state — declared at function scope so cleanup in catch can see it
+  let _vidBg = null;
+  let _curVidBmp = null;   // current video frame bitmap for drawFrame(t)
 
   try {
     // ── Gather settings ──
@@ -7772,11 +7995,25 @@ async function startMP4Export() {
     const ch0         = audioBuf.getChannelData(0);
     const ch1         = audioBuf.numberOfChannels > 1 ? audioBuf.getChannelData(1) : ch0;
 
-    // ── Load background image ──
-    subEl.textContent = 'Loading image…';
+    // ── Load background (image or decoded video) ──
+    // For video: decode all frames up front, then use the first frame as the
+    // static bgImg so all downstream dimension/crop math stays valid. The per-frame
+    // moving background is drawn from _vidBg in the Canvas 2D loop.
     const bgImg = new Image();
-    bgImg.src = document.getElementById('preview-bg').src;
-    await new Promise(r => { bgImg.onload = r; bgImg.onerror = r; });
+    if (bgType === 'video' && bgVideoFile) {
+      subEl.textContent = 'Decoding video…';
+      _vidBg = await decodeVideoBackground(bgVideoFile, subEl);
+      const first = await _vidBg.bitmapAt(0);
+      const _c = document.createElement('canvas');
+      _c.width = _vidBg.width; _c.height = _vidBg.height;
+      _c.getContext('2d').drawImage(first, 0, 0);
+      bgImg.src = _c.toDataURL('image/jpeg', 0.92);
+      await new Promise(r => { bgImg.onload = r; bgImg.onerror = r; });
+    } else {
+      subEl.textContent = 'Loading image…';
+      bgImg.src = document.getElementById('preview-bg').src;
+      await new Promise(r => { bgImg.onload = r; bgImg.onerror = r; });
+    }
 
     // ── Set up mp4-muxer via CDN ──
     subEl.textContent = 'Loading encoder…';
@@ -8387,24 +8624,29 @@ async function startMP4Export() {
 
       ctx.clearRect(0, 0, W, H);
 
-      // Background — object-fit:cover scaling to match live preview
+      // Background — object-fit:cover scaling to match live preview.
+      // For a video background, draw the current decoded frame (_curVidBmp);
+      // otherwise the static image. Same dimensions, so the crop math is shared.
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
-      const imgAR = bgImg.naturalWidth / bgImg.naturalHeight;
+      const _bgSrc = (_vidBg && _curVidBmp) ? _curVidBmp : bgImg;
+      const _bgW = _bgSrc.naturalWidth || _bgSrc.width;
+      const _bgH = _bgSrc.naturalHeight || _bgSrc.height;
+      const imgAR = _bgW / _bgH;
       const canAR = W / H;
-      let sx = 0, sy = 0, sw = bgImg.naturalWidth, sh = bgImg.naturalHeight;
+      let sx = 0, sy = 0, sw = _bgW, sh = _bgH;
       if (imgAR > canAR) {
-        // Image wider than canvas — crop sides
-        sw = Math.round(bgImg.naturalHeight * canAR);
-        sx = Math.round((bgImg.naturalWidth - sw) / 2);
+        // Wider than canvas — crop sides
+        sw = Math.round(_bgH * canAR);
+        sx = Math.round((_bgW - sw) / 2);
       } else {
-        // Image taller than canvas — crop top/bottom
-        sh = Math.round(bgImg.naturalWidth / canAR);
-        sy = Math.round((bgImg.naturalHeight - sh) / 2);
+        // Taller than canvas — crop top/bottom
+        sh = Math.round(_bgW / canAR);
+        sy = Math.round((_bgH - sh) / 2);
       }
       // Apply saturate(0.75) via ctx.filter — matches editor CSS filter
       ctx.filter = 'saturate(0.75)';
-      ctx.drawImage(bgImg, sx, sy, sw, sh, 0, 0, W, H);
+      ctx.drawImage(_bgSrc, sx, sy, sw, sh, 0, 0, W, H);
       ctx.filter = 'none';
       ctx.globalCompositeOperation = 'source-atop';
       ctx.globalAlpha = ov * 0.6;
@@ -9251,6 +9493,8 @@ async function startMP4Export() {
       for (let i = f; i < Math.min(f + BATCH, totalFrames); i++) {
         if (exportError) break;
         const t = i / fps;
+        // Decode/lookup the video-background frame for this time (loops to song length)
+        if (_vidBg) _curVidBmp = await _vidBg.bitmapAt(t);
         drawFrame(t);
 
         const bitmap = await createImageBitmap(offCanvas);
@@ -9324,10 +9568,12 @@ async function startMP4Export() {
     document.getElementById('mp4-wait-msg').style.display = 'none';
     progressEl.classList.remove('open');
     document.getElementById('rec-badge').style.display = 'none';
+    if (_vidBg) { _vidBg.dispose(); _vidBg = null; }
 
   } catch(err) {
     _reportExportError(err, 'canvas2d');
     console.error('MP4 export error:', err);
+    if (_vidBg) { try { _vidBg.dispose(); } catch(_) {} _vidBg = null; }
     document.getElementById('mp4-wait-msg').style.display = 'none';
     subEl.textContent = '⚠ Error: ' + err.message;
     setTimeout(() => document.getElementById('mp4-progress').classList.remove('open'), 5000);
@@ -9785,14 +10031,23 @@ function clearCurrentProject() {
   const wc = document.getElementById('waveform-canvas');
   if (wc) { const ctx = wc.getContext('2d'); ctx.clearRect(0,0,wc.width,wc.height); }
 
-  // Clear image
+  // Clear image / video background
   imgLoaded = false;
+  bgType = 'image';
+  bgVideoFile = null;
   const bg = document.getElementById('preview-bg');
   bg.src = ''; bg.style.display = 'none';
+  const bgVid = document.getElementById('preview-bg-video');
+  if (bgVid) {
+    bgVid.pause();
+    if (bgVid.src && bgVid.src.startsWith('blob:')) URL.revokeObjectURL(bgVid.src);
+    bgVid.removeAttribute('src'); bgVid.load();
+    bgVid.style.display = 'none';
+  }
   document.getElementById('no-img').style.display = '';
   document.getElementById('img-zone').classList.remove('done');
-  document.getElementById('img-title').textContent = 'Click to upload image';
-  document.getElementById('img-hint').textContent  = 'JPG · PNG · WebP';
+  document.getElementById('img-title').textContent = 'Click to upload image or video';
+  document.getElementById('img-hint').textContent  = 'JPG · PNG · WebP · MP4';
 
   // Clear text
   document.getElementById('f-title').value  = '';
@@ -10194,7 +10449,7 @@ AUD.addEventListener('ended', onEnded);
 AUD.addEventListener('seeked', () => {
   _lastLyricIdx = -1;
   // Don't allow seeking to bypass the gate — if gate fired, keep audio paused
-  if (_previewGateFired && !_user) {
+  if (_previewGateFired && !_user && !_DEV_UNLOCK) {
     AUD.pause();
     isPlaying = false;
     setPlayIcon(false);
@@ -10211,8 +10466,15 @@ const SUPABASE_ANON = 'sb_publishable_wtxMPn_OBqggcDFhtfrzJA_xvgNQzja';
 
 let _sb = null;      // Supabase client
 let _user = null;    // current user object
-let _isPro = false;  // paid status
-let _isAdmin = false;// admin — unlimited everything, set via profiles.is_admin
+// Local-dev unlock: when the app runs from a local file or localhost, treat the
+// session as Pro/admin so Pro features + export can be tested without cloud auth.
+// Production is always https://wavestamp.app, so this can NEVER trigger live.
+const _DEV_UNLOCK = (location.protocol === 'file:'
+  || location.hostname === 'localhost'
+  || location.hostname === '127.0.0.1');
+
+let _isPro = _DEV_UNLOCK;  // paid status
+let _isAdmin = _DEV_UNLOCK;// admin — unlimited everything, set via profiles.is_admin
 let _isFoundingMember = false; // founding member tier
 let _authMode = 'signin'; // 'signin' | 'signup'
 let _subscriptionStatus = 'free';
@@ -10262,8 +10524,8 @@ async function onAuthChange() {
       drawViz();
     }
   } else {
-    _isPro            = false;
-    _isAdmin          = false;
+    _isPro            = _DEV_UNLOCK;   // keep Pro unlocked when testing locally
+    _isAdmin          = _DEV_UNLOCK;
     _isFoundingMember = false;
     _subscriptionStatus = 'free';
     _proAccessUntil   = null;
@@ -10416,6 +10678,7 @@ function updateNavAuth(signedIn) {
 let _exportsThisMonth = 0;
 
 async function checkExportAllowed() {
+  if (_DEV_UNLOCK) return true;   // local testing — no auth/limit checks
   if (SUPABASE_URL === 'YOUR_SUPABASE_URL') return true;
   if (!_user) { openAuthModal(); return false; }
   if (_isAdmin) return true;
